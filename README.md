@@ -1,0 +1,1 @@
+Un board que permite organizar varias listas de tareas en cache para llevar el control y recordar algunas tareas.
