@@ -2,125 +2,307 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>Landing Page - Google Drive Sync</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Gestor de Tareas</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #f4f4f4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .board {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 20px;
+      padding: 20px;
+    }
+    .list {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      width: 220px;
+      min-height: 300px;
+      display: flex;
+      flex-direction: column;
+      padding: 10px;
+    }
+    .list-title {
+      font-weight: bold;
+      margin-bottom: 10px;
+      border: none;
+      font-size: 1em;
+      padding: 4px;
+    }
+    .task {
+      background: #e0f7fa;
+      padding: 8px;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      cursor: pointer;
+    }
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .btn {
+      background: #007bff;
+      border: none;
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .btn.delete { background: #dc3545; }
+    .btn.edit { background: #ffc107; color: #000; }
+    .add-btn {
+      background: #d9534f;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      margin-top: auto;
+      padding: 6px;
+      cursor: pointer;
+    }
+    .modal {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+    .modal-content {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      max-width: 400px;
+      width: 100%;
+    }
+    .floating-buttons {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .control-buttons {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+  </style>
 </head>
 <body>
-  <h1>Landing con Google Drive Sync</h1>
+  <div class="board" id="board"></div>
 
-  <!-- Botón para iniciar sesión -->
-  <button id="login-btn">Iniciar sesión con Google</button>
-  <button id="save-btn" disabled>Guardar datos en Drive</button>
-  <button id="load-btn" disabled>Cargar datos desde Drive</button>
+  <div class="floating-buttons">
+    <button class="btn" onclick="saveToCache()">Guardar en caché</button>
+    <button class="btn" onclick="showFileModal()">Cargar / Descargar</button>
+    <!-- Google Drive Sync - Buttons-->
+    <button class="btn" onclick="sync.login()">Iniciar sesión Google</button>
+    <button class="btn" id="saveDriveBtn" onclick="sync.saveToDrive()" disabled>Guardar en Drive</button>
+    <button class="btn" id="loadDriveBtn" onclick="sync.loadFromDrive()" disabled>Cargar desde Drive</button>
+  </div>
 
-  <pre id="output"></pre>
+  <div class="control-buttons">
+    <button class="btn" onclick="addList()">+</button>
+    <button class="btn" onclick="removeList()">-</button>
+  </div>
+
+  <!-- Modales existentes -->
+  <div class="modal" id="taskModal">
+    <div class="modal-content">
+      <h3>Detalle de tarea</h3>
+      <p id="taskText"></p>
+      <div class="actions">
+        <button class="btn edit" onclick="editCurrentTask()">Editar</button>
+        <button class="btn delete" onclick="deleteCurrentTask()">Eliminar</button>
+        <button class="btn" onclick="closeModal('taskModal')">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="inputModal">
+    <div class="modal-content">
+      <h3>Nueva tarea</h3>
+      <input type="text" id="newTaskInput" placeholder="Escribe la tarea...">
+      <div class="actions">
+        <button class="btn" onclick="addTask()">Agregar</button>
+        <button class="btn" onclick="closeModal('inputModal')">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="fileModal">
+    <div class="modal-content">
+      <h3>¿Qué desea hacer?</h3>
+      <div class="actions">
+        <button class="btn" onclick="downloadJSON()">Descargar</button>
+        <input type="file" id="fileInput" onchange="loadFromFile(event)">
+        <button class="btn" onclick="closeModal('fileModal')">Cancelar</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
+  <!-- Script principal -->
   <script>
-    let tokenClient;
-    let accessToken = null;
-    let fileId = null;
+    let data = [
+      { title: 'Lista 1', tasks: [] },
+      { title: 'Lista 2', tasks: [] },
+      { title: 'Lista 3', tasks: [] }
+    ];
+    let currentListIndex = null;
+    let currentTaskIndex = null;
 
-    const loginBtn = document.getElementById('login-btn');
-    const saveBtn = document.getElementById('save-btn');
-    const loadBtn = document.getElementById('load-btn');
-    const output = document.getElementById('output');
+    function render() {
+      const board = document.getElementById('board');
+      board.innerHTML = '';
+      data.forEach((list, i) => {
+        const listEl = document.createElement('div');
+        listEl.className = 'list';
 
-    // 1. Inicializar el cliente OAuth 2.0
-    window.onload = () => {
-      tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: '462875291727-ub8o5u6na03e0q12v23a892tuajgkcdh.apps.googleusercontent.com',
-        scope: 'https://www.googleapis.com/auth/drive.file',
-        callback: (tokenResponse) => {
-          accessToken = tokenResponse.access_token;
-          saveBtn.disabled = false;
-          loadBtn.disabled = false;
-          output.textContent = '✅ Login correcto. Access Token obtenido.';
-        },
-      });
-    };
+        const title = document.createElement('input');
+        title.className = 'list-title';
+        title.value = list.title;
+        title.onchange = e => {
+          data[i].title = e.target.value;
+          saveToCache();
+        };
+        listEl.appendChild(title);
 
-    // 2. Login cuando se hace click
-    loginBtn.onclick = () => {
-      tokenClient.requestAccessToken();
-    };
-
-    // 3. Guardar archivo JSON en Drive
-    saveBtn.onclick = async () => {
-      if (!accessToken) return;
-
-      const data = {
-        mensaje: 'Hola desde mi landing page!',
-        timestamp: new Date().toISOString()
-      };
-
-      const metadata = {
-        name: 'landing_data.json',
-        mimeType: 'application/json'
-      };
-
-      const boundary = '-------314159265358979323846';
-      const delimiter = "\r\n--" + boundary + "\r\n";
-      const close_delim = "\r\n--" + boundary + "--";
-
-      const multipartRequestBody =
-        delimiter +
-        'Content-Type: application/json\r\n\r\n' +
-        JSON.stringify(metadata) +
-        delimiter +
-        'Content-Type: application/json\r\n\r\n' +
-        JSON.stringify(data) +
-        close_delim;
-
-      const url = fileId
-        ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
-        : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-
-      const method = fileId ? 'PATCH' : 'POST';
-
-      const res = await fetch(url, {
-        method: method,
-        headers: {
-          'Authorization': 'Bearer ' + accessToken,
-          'Content-Type': 'multipart/related; boundary=' + boundary
-        },
-        body: multipartRequestBody
-      });
-
-      const result = await res.json();
-      fileId = result.id;
-
-      output.textContent = '✅ Datos guardados en Drive con ID: ' + fileId;
-    };
-
-    // 4. Cargar archivo JSON desde Drive
-    loadBtn.onclick = async () => {
-      if (!accessToken) return;
-
-      // Buscar archivo por nombre
-      const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=name='landing_data.json' and trashed=false`, {
-        headers: {
-          'Authorization': 'Bearer ' + accessToken
-        }
-      });
-
-      const searchData = await searchRes.json();
-      if (searchData.files && searchData.files.length > 0) {
-        fileId = searchData.files[0].id;
-
-        const downloadRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-          headers: {
-            'Authorization': 'Bearer ' + accessToken
-          }
+        list.tasks.forEach((task, j) => {
+          const taskEl = document.createElement('div');
+          taskEl.className = 'task';
+          taskEl.textContent = task;
+          taskEl.onclick = () => showTaskModal(i, j);
+          listEl.appendChild(taskEl);
         });
 
-        const fileData = await downloadRes.json();
-        output.textContent = '📂 Datos cargados desde Drive:\n' + JSON.stringify(fileData, null, 2);
-      } else {
-        output.textContent = '⚠️ No se encontró ningún archivo.';
+        const addBtn = document.createElement('button');
+        addBtn.className = 'add-btn';
+        addBtn.textContent = '+';
+        addBtn.onclick = () => {
+          currentListIndex = i;
+          document.getElementById('newTaskInput').value = '';
+          document.getElementById('inputModal').style.display = 'flex';
+        };
+        listEl.appendChild(addBtn);
+
+        board.appendChild(listEl);
+      });
+    }
+
+    function addTask() {
+      const value = document.getElementById('newTaskInput').value;
+      if (value && currentListIndex !== null) {
+        data[currentListIndex].tasks.push(value);
+        render();
+        saveToCache();
+        closeModal('inputModal');
       }
-    };
+    }
+
+    function showTaskModal(listIdx, taskIdx) {
+      currentListIndex = listIdx;
+      currentTaskIndex = taskIdx;
+      document.getElementById('taskText').textContent = data[listIdx].tasks[taskIdx];
+      document.getElementById('taskModal').style.display = 'flex';
+    }
+
+    function editCurrentTask() {
+      const newText = prompt('Editar tarea:', data[currentListIndex].tasks[currentTaskIndex]);
+      if (newText !== null) {
+        data[currentListIndex].tasks[currentTaskIndex] = newText;
+        render();
+        saveToCache();
+        closeModal('taskModal');
+      }
+    }
+
+    function deleteCurrentTask() {
+      if (confirm('¿Eliminar esta tarea?')) {
+        data[currentListIndex].tasks.splice(currentTaskIndex, 1);
+        render();
+        saveToCache();
+        closeModal('taskModal');
+      }
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).style.display = 'none';
+    }
+
+    function saveToCache() {
+      localStorage.setItem('taskData', JSON.stringify(data));
+    }
+
+    function loadFromCache() {
+      const saved = localStorage.getItem('taskData');
+      if (saved) {
+        data = JSON.parse(saved);
+        render();
+      }
+    }
+
+    function showFileModal() {
+      document.getElementById('fileModal').style.display = 'flex';
+    }
+
+    function downloadJSON() {
+      const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'tareas.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function loadFromFile(e) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = function(ev) {
+        data = JSON.parse(ev.target.result);
+        render();
+        saveToCache();
+        closeModal('fileModal');
+      };
+      reader.readAsText(file);
+    }
+
+    function addList() {
+      data.push({ title: 'Nueva lista', tasks: [] });
+      render();
+      saveToCache();
+    }
+
+    function removeList() {
+      if (data.length > 0) {
+        data.pop();
+        render();
+        saveToCache();
+      }
+    }
+
+    loadFromCache();
+    render();
   </script>
+
+  <!-- Sync module -->
+  <script src="./js/sync.js"></script>
 </body>
 </html>
