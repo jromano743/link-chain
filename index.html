@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Landing Page - Google Drive Sync</title>
+</head>
+<body>
+  <h1>Landing con Google Drive Sync</h1>
+
+  <!-- Botón para iniciar sesión -->
+  <button id="login-btn">Iniciar sesión con Google</button>
+  <button id="save-btn" disabled>Guardar datos en Drive</button>
+  <button id="load-btn" disabled>Cargar datos desde Drive</button>
+
+  <pre id="output"></pre>
+
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <script>
+    let tokenClient;
+    let accessToken = null;
+    let fileId = null;
+
+    const loginBtn = document.getElementById('login-btn');
+    const saveBtn = document.getElementById('save-btn');
+    const loadBtn = document.getElementById('load-btn');
+    const output = document.getElementById('output');
+
+    // 1. Inicializar el cliente OAuth 2.0
+    window.onload = () => {
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: 'TU_CLIENT_ID_AQUI.apps.googleusercontent.com',
+        scope: 'https://www.googleapis.com/auth/drive.file',
+        callback: (tokenResponse) => {
+          accessToken = tokenResponse.access_token;
+          saveBtn.disabled = false;
+          loadBtn.disabled = false;
+          output.textContent = '✅ Login correcto. Access Token obtenido.';
+        },
+      });
+    };
+
+    // 2. Login cuando se hace click
+    loginBtn.onclick = () => {
+      tokenClient.requestAccessToken();
+    };
+
+    // 3. Guardar archivo JSON en Drive
+    saveBtn.onclick = async () => {
+      if (!accessToken) return;
+
+      const data = {
+        mensaje: 'Hola desde mi landing page!',
+        timestamp: new Date().toISOString()
+      };
+
+      const metadata = {
+        name: 'landing_data.json',
+        mimeType: 'application/json'
+      };
+
+      const boundary = '-------314159265358979323846';
+      const delimiter = "\r\n--" + boundary + "\r\n";
+      const close_delim = "\r\n--" + boundary + "--";
+
+      const multipartRequestBody =
+        delimiter +
+        'Content-Type: application/json\r\n\r\n' +
+        JSON.stringify(metadata) +
+        delimiter +
+        'Content-Type: application/json\r\n\r\n' +
+        JSON.stringify(data) +
+        close_delim;
+
+      const url = fileId
+        ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+        : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+
+      const method = fileId ? 'PATCH' : 'POST';
+
+      const res = await fetch(url, {
+        method: method,
+        headers: {
+          'Authorization': 'Bearer ' + accessToken,
+          'Content-Type': 'multipart/related; boundary=' + boundary
+        },
+        body: multipartRequestBody
+      });
+
+      const result = await res.json();
+      fileId = result.id;
+
+      output.textContent = '✅ Datos guardados en Drive con ID: ' + fileId;
+    };
+
+    // 4. Cargar archivo JSON desde Drive
+    loadBtn.onclick = async () => {
+      if (!accessToken) return;
+
+      // Buscar archivo por nombre
+      const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=name='landing_data.json' and trashed=false`, {
+        headers: {
+          'Authorization': 'Bearer ' + accessToken
+        }
+      });
+
+      const searchData = await searchRes.json();
+      if (searchData.files && searchData.files.length > 0) {
+        fileId = searchData.files[0].id;
+
+        const downloadRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+          headers: {
+            'Authorization': 'Bearer ' + accessToken
+          }
+        });
+
+        const fileData = await downloadRes.json();
+        output.textContent = '📂 Datos cargados desde Drive:\n' + JSON.stringify(fileData, null, 2);
+      } else {
+        output.textContent = '⚠️ No se encontró ningún archivo.';
+      }
+    };
+  </script>
+</body>
+</html>
